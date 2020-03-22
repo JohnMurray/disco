@@ -1,0 +1,116 @@
+#!/bin/bash
+
+DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
+DOCKER_IMAGE="pi_builder:latest"
+DOCKER_SOCK=/var/run/docker.sock
+
+
+##-----------------------------------------------------------------------------
+## Arg Parsing
+##
+
+# defaults
+COMMAND="build"
+
+# loop through all provided args
+while (( "$#" )); do
+  case "$1" in
+    update|up)
+      COMMAND="update"
+      shift
+      ;;
+    build)
+      shift
+      ;;
+    *) # unsupported flags or trailing arguments
+      echo "Error: Unsupported command $1" >&2
+      exit 1
+      ;;
+  esac
+done
+
+
+##-----------------------------------------------------------------------------
+## Utility Functions
+##
+silent_pushd() {
+    pushd $1 > /dev/null 2>&1
+}
+
+silent_popd() {
+    popd $1 > /dev/null 2>&1
+}
+
+log() {
+    echo "[rpb] $@"
+}
+
+has_image() {
+    res = $(docker image ls ${DOCKER_IMAGE} -q | wc -l)
+    [[ "$res" -eq "1" ]] && return
+    false
+}
+
+assert_docker_running() {
+    # assert docker is running by ensuring the socket exists
+    # (this is probably wrong and too simple but whatever)
+    if [ ! -e $DOCKER_SOCK ] ; then
+        log "Docker is not running, no active socket found: ${DOCKER_SOCK}"
+        exit 1
+    fi
+}
+
+docker_requires_sudo() {
+    [[ ! -w $DOCKER_SOCK ]] && return
+    false
+}
+
+
+##-----------------------------------------------------------------------------
+## Primary Functions
+##
+
+build_image() {
+    silent_pushd $DIR
+
+    # Build up options for building docker image
+    opts="-t ${DOCKER_IMAGE} --rm"
+    if [ "$1" != "" ] ; then
+        opts="${opts} $1"
+    fi
+
+    # Determine if sudo is necessary
+    sudo=""
+    [[ docker_requires_sudo ]] && sudo="sudo"
+
+    $sudo docker build $opts .
+    ret=$?
+
+    if [ "$ret" -ne "0" ] ; then
+        log "Error encountered while building docker image, cannot proceed (exit code: ${ret})"
+        exit 1
+    fi
+
+    silent_popd
+}
+
+run_image() {
+    [[ ! has_image ]] && build_image
+    cmd="docker run -ti --mount type=bind,src=$(pwd),dst=/build $DOCKER_IMAGE"
+    log "Building with: ${cmd}"
+    $cmd
+}
+
+
+##-----------------------------------------------------------------------------
+## Main
+##
+
+if [ "${COMMAND}" = "build" ] ; then
+    run_image
+elif [ "${COMMAND}" = "update" ] ; then
+    build_image --no-cache
+else
+    log "Unexpected command: ${COMMAND}"
+    exit 1
+fi
