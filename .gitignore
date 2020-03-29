@@ -1,0 +1,4 @@
+*.swp
+
+# some local toy directories
+pi-hello/
